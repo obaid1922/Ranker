@@ -145,14 +145,15 @@ def languageModelRanking(queries, wordindices, wordstats, docinfo, avg, docs, vo
     return rankings
 
 
-def bm25Ranking(queries, wordindices, wordstats, docinfo, avg, docs):
+def bm25Ranking(queries, wordindices, wordstats, docinfo, avg, docs, kval):
     tf = -1
     idf = -1
     bm25scores = []
     k1 = 1.2
-    k2 = 500
+    k2 = kval
+    print(k2)
     b = 0.75
-
+    print()
     rankings = {}
     for inquery in queries:
         for doc in docs:
@@ -167,6 +168,8 @@ def bm25Ranking(queries, wordindices, wordstats, docinfo, avg, docs):
                 a = math.log10((len(docs) + 0.5) / (wordstats[vocab[qterm]][1] + 0.5))
                 a1 = ((1 + k1) * tf) / (K + tf)
                 a2 = ((1 + k2) * queries[inquery][qterm]) / (k2 + queries[inquery][qterm])
+                if a2 != 1.0:
+                    print("YEEEET!!!!!!!!!!!!!!!")
                 bm25score += a * a1 * a2
 
             if inquery not in rankings:
@@ -190,31 +193,49 @@ def readEvaluations():
     previousquery = currentquery
     innerdict = {}
     judgments = {}
+    releventDocs = 0
     for entry in contents:
         evaluation = entry.split(" ")
         docname = evaluation[2]
         relevence = int(evaluation[3])
         if relevence > 0:
             relevence = 1
+            releventDocs += 1
         else:
             relevence = 0
         previousquery = currentquery
         currentquery = int(evaluation[0])
         if previousquery != currentquery:
-            judgments[previousquery] = innerdict
+            judgments[previousquery] = [innerdict, releventDocs]
             innerdict = {}
+            releventDocs = 0
             innerdict[docname] = relevence
         else:
             innerdict[docname] = relevence
+    judgments[previousquery] = [innerdict, releventDocs]
     return judgments
+
+
+def evaluateMAP(rankedList, judgments):
+    p = 30
+    precisisionK = -1
+    total = 0
+    for query in rankedList:
+        relevent = 0
+        for i in range(p):
+            doc = rankedList[query][i][1]
+            if doc in judgements[query][0]:
+                if judgements[query][0][doc] == 1:
+                    relevent += 1
+        precisisionK = relevent / p
+        print(precisisionK)
+        total += precisisionK
+    # print(total / len(rankedList))
 
 
 offsets = readOffset()
 vocab = readVocabulary()
 docs = readDocIds()
-for doc in docs:
-    if ".txt" in doc:
-        print(doc)
 judgements = readEvaluations()
 wordindices = {}
 wordstats = {}
@@ -226,6 +247,10 @@ for inquery in queries:
         wordindex, wordstat = readHashInvertedIndex(offsets[vocab[query]])
         wordindices[vocab[query]] = wordindex
         wordstats[vocab[query]] = wordstat[vocab[query]]
-
-rankedList = bm25Ranking(queries, wordindices, wordstats, docinfo, avg, docs)
-rankedListLM = languageModelRanking(queries, wordindices, wordstats, docinfo, avg, docs, vocab)
+    # for k2 in range(0, 1000, 2):
+rankedList = bm25Ranking(queries, wordindices, wordstats, docinfo, avg, docs, 500)
+# rankedListLM = languageModelRanking(queries, wordindices, wordstats, docinfo, avg, docs, vocab)
+for x in rankedList[250]:
+    if x[1] == 'clueweb12-0101wb-39-29794':
+        print(x[0])
+# evaluateMAP(rankedList, judgements)
