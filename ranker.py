@@ -2,6 +2,8 @@ import regex
 from xml.dom import minidom
 from nltk.stem import PorterStemmer
 import math
+import sys
+import getopt
 
 
 def readHashInvertedIndex(offset):
@@ -88,7 +90,7 @@ def termDocInfo():
         docinfo[key] = [doclen, docuniq]
         sum += doclen
     avg = sum / len(docinfo)
-    return docinfo, avg
+    return docinfo, avg, sum
 
 
 xmldoc = minidom.parse('topics.xml')
@@ -112,7 +114,7 @@ for query in topics:
     queries[number] = qrep
 
 
-def languageModelRanking(queries, wordindices, wordstats, docinfo, avg, docs, vocab):
+def languageModelRanking(queries, wordindices, wordstats, docinfo, avg, sum, docs, vocab):
     probabilityDist = []
     rankings = {}
     for inquery in queries:
@@ -129,7 +131,7 @@ def languageModelRanking(queries, wordindices, wordstats, docinfo, avg, docs, vo
                 if docinfo[docs[doc]][0] != 0:
                     a1 = ((docinfo[docs[doc]][0]) / (docinfo[docs[doc]][0] + avg)) * (
                             occurences / docinfo[docs[doc]][0])
-                a2 = (avg / (docinfo[docs[doc]][0] + avg)) * (wordstats[vocab[qterm]][0] / len(vocab))
+                a2 = (avg / (docinfo[docs[doc]][0] + avg)) * (wordstats[vocab[qterm]][0] / sum)
                 total = a1 + a2
                 probability = float(probability) * float(total)
             if inquery not in rankings:
@@ -151,7 +153,6 @@ def bm25Ranking(queries, wordindices, wordstats, docinfo, avg, docs, kval):
     bm25scores = []
     k1 = 1.2
     k2 = kval
-    print(k2)
     b = 0.75
     print()
     rankings = {}
@@ -160,16 +161,14 @@ def bm25Ranking(queries, wordindices, wordstats, docinfo, avg, docs, kval):
             bm25score = 0
             for qterm in queries[inquery]:
                 if docs[doc] in wordindices[vocab[qterm]]:
-                    tf = 1 + math.log10(len(wordindices[vocab[qterm]][docs[doc]]))
+                    tf = 1 + math.log2(len(wordindices[vocab[qterm]][docs[doc]]))
                 else:
                     tf = 0
                 idf = 1 + (len(docs) / wordstats[vocab[qterm]][1])
                 K = k1 * ((1 - b) + (b * (docinfo[docs[doc]][0] / avg)))
-                a = math.log10((len(docs) + 0.5) / (wordstats[vocab[qterm]][1] + 0.5))
+                a = math.log2((len(docs) + 0.5) / (wordstats[vocab[qterm]][1] + 0.5))
                 a1 = ((1 + k1) * tf) / (K + tf)
                 a2 = ((1 + k2) * queries[inquery][qterm]) / (k2 + queries[inquery][qterm])
-                if a2 != 1.0:
-                    print("YEEEET!!!!!!!!!!!!!!!")
                 bm25score += a * a1 * a2
 
             if inquery not in rankings:
@@ -216,10 +215,11 @@ def readEvaluations():
     return judgments
 
 
-def evaluateMAP(rankedList, judgments):
-    p = 30
+def evaluateMAP(rankedList, judgments, docs, kv, printMAP):
+    p = kv
     precisisionK = -1
     total = 0
+    totalAvg = 0
     for query in rankedList:
         relevent = 0
         for i in range(p):
@@ -229,8 +229,21 @@ def evaluateMAP(rankedList, judgments):
                     relevent += 1
         precisisionK = relevent / p
         print(precisisionK)
+        rank = 1
+        cummulativePrec = 0
+        relevent = 0
+        for doc in rankedList[query]:
+            docname = doc[1]
+            if docname in judgements[query][0]:
+                if judgements[query][0][docname] == 1:
+                    relevent += 1
+                    cummulativePrec += relevent / rank
+            rank += 1
+        totalAvg += cummulativePrec / judgements[query][1]
         total += precisisionK
-    # print(total / len(rankedList))
+    MAP = totalAvg / 10
+    if printMAP:
+        print("\n\n MAP = ", MAP)
 
 
 offsets = readOffset()
@@ -240,17 +253,49 @@ judgements = readEvaluations()
 wordindices = {}
 wordstats = {}
 i = 0
-docinfo, avg = termDocInfo()
+docinfo, avg, sum = termDocInfo()
 for inquery in queries:
     queryterms = queries[inquery]
     for query in queryterms:
         wordindex, wordstat = readHashInvertedIndex(offsets[vocab[query]])
         wordindices[vocab[query]] = wordindex
         wordstats[vocab[query]] = wordstat[vocab[query]]
-    # for k2 in range(0, 1000, 2):
-rankedList = bm25Ranking(queries, wordindices, wordstats, docinfo, avg, docs, 500)
-# rankedListLM = languageModelRanking(queries, wordindices, wordstats, docinfo, avg, docs, vocab)
-for x in rankedList[250]:
-    if x[1] == 'clueweb12-0101wb-39-29794':
-        print(x[0])
-# evaluateMAP(rankedList, judgements)
+
+algo = ''
+try:
+    opts, args = getopt.getopt(sys.argv[1:], "hi:o:", ["score="])
+except getopt.GetoptError:
+    print('Provide the algorithm')
+    sys.exit(2)
+if len(opts) == 0:
+    print('Please Enter in Correct Format')
+    sys.exit()
+for opt, arg in opts:
+    if opt == '-h':
+        print('read_index.py --score <type>')
+        sys.exit()
+    elif opt in ("--score"):
+        algo = arg.lower()
+    else:
+        print('provide the algorithm')
+        sys.exit()
+
+rankedList = None
+if algo == 'bm25'.lower():
+    rankedList = bm25Ranking(queries, wordindices, wordstats, docinfo, avg, docs, 5)
+if algo == 'LM_Drichlet_Smoothing'.lower():
+    rankedList = languageModelRanking(queries, wordindices, wordstats, docinfo, avg, sum, docs, vocab)
+fd = open(algo + "Rankings.txt", 'w')
+for query in rankedList:
+    i = 1
+    for doc in rankedList[query]:
+        i += 1
+        fd.write(str(query) + '\t' + doc[1] + '\t' + str(i) + '\t' + str(doc[0]) + '\t' + 'run1' + '\n')
+
+kvals = [5, 10, 20, 30]
+for k in kvals:
+    pr = False
+    if k == 30:
+        pr = True
+    print("Precision at " + str(k) + " :\n")
+    evaluateMAP(rankedList, judgements, docs, k, pr)
